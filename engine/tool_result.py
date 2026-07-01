@@ -10,5 +10,5 @@ class ToolResult:
     data: Any
     explanation: str
 
-    warnings: list[str]=field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     
