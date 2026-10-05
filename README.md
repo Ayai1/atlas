@@ -33,5 +33,3 @@ Builds Atlas from a single read-only tool into a library of **31 safe, reversibl
   - `power.max_processor_state` 100% → 99% → 100%
 - [x] The real run caught a bug that the fakes missed (wrong WMI argument types for brightness). It is fixed, with a regression test.
 - [ ] Not yet tested on real hardware: `power.plan` (test machine has only Balanced), `network.proxy` (no proxy configured), and physical lid/battery behaviour
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
