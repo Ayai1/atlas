@@ -1,0 +1,8 @@
+# Runtime dependencies.
+# Deliberately minimal: the project must run on a modest machine, and every
+# dependency is weight on the user's laptop and install size.
+
+psutil>=5.9        # hardware and memory readings for system.info
+
+# Development only:
+#   pytest>=8.0

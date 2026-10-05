@@ -24,3 +24,10 @@ dist/
 # OS
 Thumbs.db
 .DS_Store
+# Tests
+.pytest_cache/
+.coverage
+
+# Local state
+journal.jsonl
+.atlas/
