@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-first-ai-os-companion"
+version = "0.2.0"
+description = "A local-first AI operating system companion — understand, manage and control your own computer, safely and reversibly"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["windows", "accessibility", "settings", "local-first", "system"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+]
+dependencies = ["psutil>=5.9"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+atlas = "main:main"
+
+# Explicit package list. Without this, setuptools' flat-layout discovery
+# sees every top-level folder (assets, logs, docs, ...) and refuses to build.
+[tool.setuptools]
+packages = [
+    "engine",
+    "windows",
+    "tools",
+    "tools.system",
+    "tools.power",
+    "tools.accessibility",
+    "tools.display",
+    "tools.network",
+    "tools.storage",
+    "ui",
+]
+py-modules = ["main", "run_ui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
