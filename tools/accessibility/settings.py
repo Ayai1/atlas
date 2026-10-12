@@ -210,6 +210,8 @@ class TextSizeTool(_RegistryTool):
                 f"{current}%. 100% is normal size.")
 
     def explain(self, prior: int, new: int) -> str:
-        return (f"Text is now shown at {new}% of normal size; it was {prior}%. "
-                "This affects menus, settings and most applications. Nothing "
-                "else changed, and 'undo' puts it back exactly.")
+        return (f"Text size is now set to {new}%; it was {prior}%. Settings, "
+                "the Start menu and other modern apps change straight away. "
+                "Programs that were already open, such as File Explorer and "
+                "Notepad, show the new size when you close and reopen them. "
+                "Nothing else changed, and 'undo' puts it back exactly.")

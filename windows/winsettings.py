@@ -7,8 +7,9 @@ Two facts this module exists to hide:
    trained to click through elevation prompts.
 2. Writing the registry value alone often changes nothing on screen. Windows
    only notices when SystemParametersInfoW is called to broadcast the change.
-   Every SPI constant used here was checked against Microsoft's documentation;
-   we do not call one we could not verify.
+   Every SPI constant used here was checked against Microsoft's documentation,
+   with one named exception (SPI_SETCURSORSIZE, below) that is checked on a
+   real machine instead; we do not call one we could not verify.
 
 Read-before-write is enforced: read_value() is always called before
 write_value(), which is what makes undo possible (ARCHITECTURE.md P3, P4).
@@ -40,6 +41,13 @@ SPI_SETCURSORS         = 0x0057   # 87   — signal only, reloads cursors
 SPI_SETMOUSESPEED      = 0x0071   # 113  — pvParam carries the value
 SPI_SETCARETWIDTH      = 0x2007   # 8199 — pvParam carries the value
 
+# Not in Microsoft's public headers. It is reported to be the call the
+# Windows 10/11 Settings app makes for its pointer-size slider: pvParam
+# carries the size in pixels (32-256) and Windows redraws the pointer at once.
+# SPI_SETCURSORS alone does not redraw it on Windows 11; this does (both
+# checked on build 26200 with tests/test_tmp_live_apply.py, variants A-F).
+SPI_SETCURSORSIZE      = 0x2029   # 8233 — pvParam carries the size in pixels
+
 SPIF_UPDATEINIFILE = 0x01
 SPIF_SENDCHANGE    = 0x02
 _SPIF = SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
@@ -56,7 +64,8 @@ class Setting:
     spi: int | None = None   # SystemParametersInfo action, if any
     spi_mode: str = "none"   # "ui" | "pv" | "signal" | "none"
     needs_signout: bool = False
-    notify: str = "none"     # "theme" | "internet" | "none" — see _notify()
+    notify: str = "none"     # "theme" | "internet" | "textscale" | "none" — see _notify()
+    companion: str = "none"  # "cursor_size" — a second value Windows reads; see below
 
 
 def _require_windows() -> None:
@@ -95,6 +104,44 @@ def read_value(setting: Setting) -> int:
     return read_state(setting)[0]
 
 
+# --- companion values -------------------------------------------------------
+# Windows 10/11 Settings keeps the pointer size in TWO places: the classic
+# Control Panel\Cursors\CursorBaseSize (pixels) and Accessibility\CursorSize
+# (a step from 1 to 15). Writing only the first often leaves the pointer
+# unchanged, because the Settings app and the cursor loader read the step.
+# The step is derived from the pixels, so undo stays exact: restoring the
+# pixel value restores the step, and removing the pixel value removes both.
+ACCESSIBILITY_KEY = r"Software\Microsoft\Accessibility"
+
+
+def _cursor_step(pixels: int) -> int:
+    """32 px -> 1, 48 -> 2, 64 -> 3 ... 256 -> 15."""
+    return max(1, min(15, round((int(pixels) - 16) / 16)))
+
+
+def _write_companion(setting: Setting, value: int) -> None:
+    if setting.companion == "cursor_size":
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER, ACCESSIBILITY_KEY, 0, winreg.KEY_SET_VALUE
+        ) as k:
+            winreg.SetValueEx(
+                k, "CursorSize", 0, winreg.REG_DWORD, _cursor_step(value))
+
+
+def _delete_companion(setting: Setting) -> None:
+    if setting.companion == "cursor_size":
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, ACCESSIBILITY_KEY, 0,
+                winreg.KEY_SET_VALUE,
+            ) as k:
+                winreg.DeleteValue(k, "CursorSize")
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise SettingError(f"Could not remove 'CursorSize': {exc}") from exc
+
+
 def delete_value(setting: Setting) -> str:
     """Remove a value we created, so undo restores the registry exactly."""
     _require_windows()
@@ -107,6 +154,7 @@ def delete_value(setting: Setting) -> str:
         pass                                   # already gone; nothing to do
     except OSError as exc:
         raise SettingError(f"Could not remove '{setting.name}': {exc}") from exc
+    _delete_companion(setting)
     _apply_live(setting, setting.default)
     return f"removed HKCU\\{setting.key}\\{setting.name} (back to Windows default)"
 
@@ -122,12 +170,13 @@ def write_value(setting: Setting, value: int) -> str:
                 winreg.SetValueEx(k, setting.name, 0, winreg.REG_DWORD, int(value))
             else:
                 winreg.SetValueEx(k, setting.name, 0, winreg.REG_SZ, str(value))
+        _write_companion(setting, value)
     except OSError as exc:
         raise SettingError(f"Windows refused the change: {exc}") from exc
 
     applied = _apply_live(setting, value)
     shown = f'HKCU\\{setting.key}\\{setting.name} = {value}'
-    return shown + ("" if applied else "   (takes effect after sign-out)")
+    return shown + ("" if applied else "   (Windows may not show this until you sign out and back in)")
 
 
 def read_text(key: str, name: str) -> str | None:
@@ -181,8 +230,32 @@ def _notify(kind: str) -> bool:
     return False
 
 
+def _broadcast_setting(area: str) -> None:
+    """Broadcast WM_SETTINGCHANGE naming an area. Never raises."""
+    if ctypes is None:
+        return
+    try:
+        result = ctypes.c_size_t()
+        ctypes.windll.user32.SendMessageTimeoutW(
+            HWND_BROADCAST, WM_SETTINGCHANGE, 0, ctypes.c_wchar_p(area),
+            SMTO_ABORTIFHUNG, 2000, ctypes.byref(result))
+    except Exception:                           # noqa: BLE001
+        pass
+
+
 def _apply_live(setting: Setting, value: int) -> bool:
     """Best effort: ask Windows to adopt the change now. Never raises."""
+    if setting.notify == "textscale":
+        # There is no documented call for this. On build 26200 these
+        # broadcasts make modern apps (Settings, Start) resize text at once;
+        # programs already open, such as File Explorer and Notepad, pick it up
+        # when reopened. TextSizeTool.explain() tells the person that.
+        if ctypes is None:
+            return False
+        for area in ("WindowMetrics", "TextScaleFactor",
+                     "Accessibility", "ImmersiveColorSet"):
+            _broadcast_setting(area)
+        return True
     if setting.notify != "none":
         return _notify(setting.notify)
     if setting.spi is None or ctypes is None:
@@ -205,7 +278,7 @@ def _apply_live(setting: Setting, value: int) -> bool:
 POINTER_SIZE = Setting(
     default=32,
     key=r"Control Panel\Cursors", name="CursorBaseSize", kind="dword",
-    spi=SPI_SETCURSORS, spi_mode="signal")
+    spi=SPI_SETCURSORSIZE, spi_mode="pv", companion="cursor_size")
 
 DOUBLE_CLICK_SPEED = Setting(
     default=500,
@@ -225,7 +298,7 @@ CARET_WIDTH = Setting(
 TEXT_SCALE = Setting(
     default=100,
     key=r"Software\Microsoft\Accessibility", name="TextScaleFactor",
-    kind="dword", spi=None, spi_mode="none", needs_signout=False)
+    kind="dword", spi=None, spi_mode="none", notify="textscale")
 
 
 # --- display --------------------------------------------------------------
